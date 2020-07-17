@@ -35,7 +35,8 @@ import {
     TypeAttributes,
     makeTypeAttributesInferred,
     emptyTypeAttributes,
-    combineTypeAttributes
+    combineTypeAttributes,
+    propertyConstantAttributeProducer
 } from "../attributes/TypeAttributes";
 import { JSONSchema, JSONSchemaStore } from "./JSONSchemaStore";
 import { messageAssert, messageError } from "../Messages";
@@ -226,7 +227,7 @@ export class Ref {
     get name(): string {
         const path = Array.from(this.path);
 
-        for (;;) {
+        for (; ;) {
             const e = path.pop();
             if (e === undefined || e.kind === PathElementKind.Root) {
                 let name = this.addressURI !== undefined ? this.addressURI.filename() : "";
@@ -395,7 +396,7 @@ class Canonizer {
     private readonly _map = new EqualityMap<Ref, Location>();
     private readonly _schemaAddressesAdded = new Set<string>();
 
-    constructor(private readonly _ctx: RunContext) {}
+    constructor(private readonly _ctx: RunContext) { }
 
     private addIDs(schema: any, loc: Location) {
         if (schema === null) return;
@@ -532,7 +533,7 @@ class Resolver {
         private readonly _ctx: RunContext,
         private readonly _store: JSONSchemaStore,
         private readonly _canonizer: Canonizer
-    ) {}
+    ) { }
 
     private async tryResolveVirtualRef(
         fetchBase: Location,
@@ -544,7 +545,7 @@ class Resolver {
         // we don't know its $id mapping yet, which means we don't know where we
         // will end up.  What we do if we encounter a new schema is add all its
         // IDs first, and then try to canonize again.
-        for (;;) {
+        for (; ;) {
             const loc = this._canonizer.canonize(fetchBase, virtualRef);
             const canonical = loc.canonicalRef;
             assert(canonical.hasAddress, "Canonical ref can't be resolved without an address");
@@ -1017,7 +1018,8 @@ async function addTypesInSchema(
 
 function removeExtension(fn: string): string {
     const lower = fn.toLowerCase();
-    const extensions = [".json", ".schema"];
+    const extensions = ["-schema.json", ".json", ".schema"];
+    // const extensions = [".json", ".schema"];
     for (const ext of extensions) {
         if (lower.endsWith(ext)) {
             const base = fn.substr(0, fn.length - ext.length);
@@ -1128,6 +1130,7 @@ export class JSONSchemaInput implements Input<JSONSchemaSourceData> {
             descriptionAttributeProducer,
             accessorNamesAttributeProducer,
             enumValuesAttributeProducer,
+            propertyConstantAttributeProducer,
             uriSchemaAttributesProducer,
             minMaxAttributeProducer,
             minMaxLengthAttributeProducer,

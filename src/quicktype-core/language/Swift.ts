@@ -1,4 +1,4 @@
-import { arrayIntercalate } from "collection-utils";
+import { arrayIntercalate, mapContains } from "collection-utils";
 import { assert, defined } from "../support/Support";
 
 import { TargetLanguage } from "../TargetLanguage";
@@ -14,6 +14,7 @@ import {
     TransformedStringTypeKind,
     PrimitiveStringTypeKind
 } from "../Type";
+import { constantValueTypeAttributeKind } from "../attributes/TypeAttributes";
 import { matchType, nullableFromUnion, removeNullFromUnion } from "../TypeUtils";
 import { Name, Namer, funPrefixNamer } from "../Naming";
 import { BooleanOption, EnumOption, Option, StringOption, OptionValues, getOptionValues } from "../RendererOptions";
@@ -43,11 +44,9 @@ import { panic } from "../support/Support";
 import { DefaultDateTimeRecognizer, DateTimeRecognizer } from "../DateTime";
 import { acronymOption, acronymStyle, AcronymStyleOptions } from "../support/Acronyms";
 
-const MAX_SAMELINE_PROPERTIES = 4;
-
 export const swiftOptions = {
     justTypes: new BooleanOption("just-types", "Plain types only", false),
-    convenienceInitializers: new BooleanOption("initializers", "Generate initializers and mutators", true),
+    convenienceInitializers: new BooleanOption("initializers", "Generate initializers and mutators", false),
     explicitCodingKeys: new BooleanOption("coding-keys", "Explicit CodingKey values in Codable types", true),
     urlSession: new BooleanOption("url-session", "URLSession task extensions", false),
     alamofire: new BooleanOption("alamofire", "Alamofire extensions", false),
@@ -55,7 +54,7 @@ export const swiftOptions = {
     useClasses: new EnumOption("struct-or-class", "Structs or classes", [["struct", false], ["class", true]]),
     mutableProperties: new BooleanOption("mutable-properties", "Use var instead of let for object properties", false),
     acronymStyle: acronymOption(AcronymStyleOptions.Pascal),
-    dense: new EnumOption("density", "Code density", [["dense", true], ["normal", false]], "dense", "secondary"),
+    dense: new EnumOption("density", "Code density", [["dense", false], ["normal", true]], "dense", "secondary"),
     linux: new BooleanOption("support-linux", "Support Linux", false, "secondary"),
     objcSupport: new BooleanOption(
         "objective-c-support",
@@ -408,7 +407,7 @@ export class SwiftRenderer extends ConvenienceRenderer {
                 );
             },
             _boolType => "Bool",
-            _integerType => "Int",
+            _integerType => "Int64",
             _doubleType => "Double",
             _stringType => "String",
             arrayType => ["[", this.swiftType(arrayType.items, withIssues), "]"],
@@ -442,28 +441,28 @@ export class SwiftRenderer extends ConvenienceRenderer {
 
     private renderSingleFileHeaderComments(): void {
         this.emitLineOnce("// This file was generated from JSON Schema using quicktype, do not modify it directly.");
-        this.emitLineOnce("// To parse the JSON, add this file to your project and do:");
-        this.emitLineOnce("//");
-        this.forEachTopLevel("none", (t, topLevelName) => {
-            if (this._options.convenienceInitializers && !(t instanceof EnumType)) {
-                this.emitLineOnce(
-                    "//   let ",
-                    modifySource(camelCase, topLevelName),
-                    " = try ",
-                    topLevelName,
-                    "(json)"
-                );
-            } else {
-                this.emitLineOnce(
-                    "//   let ",
-                    modifySource(camelCase, topLevelName),
-                    " = ",
-                    "try? newJSONDecoder().decode(",
-                    topLevelName,
-                    ".self, from: jsonData)"
-                );
-            }
-        });
+        // this.emitLineOnce("// To parse the JSON, add this file to your project and do:");
+        // this.emitLineOnce("//");
+        // this.forEachTopLevel("none", (t, topLevelName) => {
+        //     if (this._options.convenienceInitializers && !(t instanceof EnumType)) {
+        //         this.emitLineOnce(
+        //             "//   let ",
+        //             modifySource(camelCase, topLevelName),
+        //             " = try ",
+        //             topLevelName,
+        //             "(json)"
+        //         );
+        //     } else {
+        //         this.emitLineOnce(
+        //             "//   let ",
+        //             modifySource(camelCase, topLevelName),
+        //             " = ",
+        //             "try? newJSONDecoder().decode(",
+        //             topLevelName,
+        //             ".self, from: jsonData)"
+        //         );
+        //     }
+        // });
     }
 
     private renderHeader(type: Type, name: Name): void {
@@ -534,9 +533,8 @@ export class SwiftRenderer extends ConvenienceRenderer {
         }
         this.ensureBlankLine();
         this.emitLineOnce("import Foundation");
-        if (!this._options.justTypes && this._options.alamofire) {
-            this.emitLineOnce("import Alamofire");
-        }
+        this.ensureBlankLine();
+        this.emitLineOnce("internal protocol RUMDataModel: Codable { }");
         this.ensureBlankLine();
     }
 
@@ -552,7 +550,9 @@ export class SwiftRenderer extends ConvenienceRenderer {
             protocols.push("NSObject");
         }
 
-        if (!this._options.justTypes) {
+        if (mapContains(this.topLevels, _t)) {
+            protocols.push("RUMDataModel");
+        } else if (!this._options.justTypes) {
             protocols.push("Codable");
         }
 
@@ -636,9 +636,27 @@ export class SwiftRenderer extends ConvenienceRenderer {
         this._currentFilename = undefined;
     }
 
-    protected propertyLinesDefinition(name: Name, parameter: ClassProperty): Sourcelike {
+    protected propertyLinesDefinition(klass: ClassType, propertyName: Name, parameter: ClassProperty): Sourcelike {
+        const paramTypeAttr = parameter.type.getAttributes()
+        const constValueAttrs = constantValueTypeAttributeKind.tryGetInAttributes(paramTypeAttr)
+        if (typeof constValueAttrs !== 'undefined') {
+            const propNames = propertyName.proposeUnstyledNames(new Map());
+            if (typeof constValueAttrs.value !== 'undefined' &&
+                propNames.has(constValueAttrs.propName)) {
+                return [this.accessLevel, "let ", propertyName, " = ", JSON.stringify(constValueAttrs.value)];
+            } else if (typeof constValueAttrs.find !== 'undefined') {
+                const rawClassNames = this.nameForNamedType(klass).proposeUnstyledNames(new Map());
+                const concatClassNames = Array.from(rawClassNames).join('|');
+                const attr = constValueAttrs.find((x: any) => {
+                    return propNames.has(x.propName) && concatClassNames.includes(x.fileName);
+                });
+                if (attr !== undefined) {
+                    return [this.accessLevel, "let ", propertyName, " = ", JSON.stringify(attr.value)];
+                }
+            }
+        }
         const useMutableProperties = this._options.mutableProperties;
-        return [this.accessLevel, useMutableProperties ? "var " : "let ", name, ": ", this.swiftPropertyType(parameter)];
+        return [this.accessLevel, useMutableProperties ? "var " : "let ", propertyName, ": ", this.swiftPropertyType(parameter)];
     }
 
     private renderClassDefinition(c: ClassType, className: Name): void {
@@ -657,56 +675,62 @@ export class SwiftRenderer extends ConvenienceRenderer {
             this.emitItem(this.objcMembersDeclaration);
         }
 
-        this.emitBlockWithAccess([structOrClass, " ", className, this.getProtocolString(c, isClass)], () => {
-            if (this._options.dense) {
-                let lastProperty: ClassProperty | undefined = undefined;
-                let lastNames: Name[] = [];
+        this.emitBlockWithAccess([this._options.accessLevel, " ", structOrClass, " ", className, this.getProtocolString(c, isClass)], () => {
+            // if (this._options.dense) {
+            //     let lastProperty: ClassProperty | undefined = undefined;
+            //     let lastNames: Name[] = [];
 
-                const emitLastProperty = () => {
-                    if (lastProperty === undefined) return;
+            //     const emitLastProperty = () => {
+            //         if (lastProperty === undefined) return;
 
-                    const useMutableProperties = this._options.mutableProperties;
+            //         const useMutableProperties = this._options.mutableProperties;
 
-                    let sources: Sourcelike[] = [[this.accessLevel, useMutableProperties ? "var " : "let "]];
-                    lastNames.forEach((n, i) => {
-                        if (i > 0) sources.push(", ");
-                        sources.push(n);
-                    });
-                    sources.push(": ");
-                    sources.push(this.swiftPropertyType(lastProperty));
-                    this.emitLine(sources);
+            //         let sources: Sourcelike[] = [[this.accessLevel, useMutableProperties ? "var " : "let "]];
+            //         lastNames.forEach((n, i) => {
+            //             if (i > 0) sources.push(", ");
+            //             sources.push(n);
+            //         });
+            //         sources.push(": ");
+            //         sources.push(this.swiftPropertyType(lastProperty));
+            //         this.emitLine(sources);
 
-                    lastProperty = undefined;
-                    lastNames = [];
-                };
+            //         lastProperty = undefined;
+            //         lastNames = [];
+            //     };
 
-                this.forEachClassProperty(c, "none", (name, jsonName, p) => {
-                    const description = this.descriptionForClassProperty(c, jsonName);
-                    if (
-                        !p.equals(lastProperty) ||
-                        lastNames.length >= MAX_SAMELINE_PROPERTIES ||
-                        description !== undefined
-                    ) {
-                        emitLastProperty();
-                    }
-                    if (lastProperty === undefined) {
-                        lastProperty = p;
-                    }
-                    lastNames.push(name);
-                    if (description !== undefined) {
-                        this.emitDescription(description);
-                        emitLastProperty();
-                    }
-                });
-                emitLastProperty();
-            } else {
-                this.forEachClassProperty(c, "none", (name, jsonName, p) => {
-                    const description = this.descriptionForClassProperty(c, jsonName);
-                    const propertyLines = this.propertyLinesDefinition(name, p);
-                    this.emitDescription(description);
-                    this.emitLine(propertyLines);
-                });
-            }
+            //     this.forEachClassProperty(c, "none", (name, jsonName, p) => {
+            //         const description = this.descriptionForClassProperty(c, jsonName);
+            //         if (
+            //             !p.equals(lastProperty) ||
+            //             lastNames.length >= MAX_SAMELINE_PROPERTIES ||
+            //             description !== undefined
+            //         ) {
+            //             emitLastProperty();
+            //         }
+            //         if (lastProperty === undefined) {
+            //             lastProperty = p;
+            //         }
+            //         lastNames.push(name);
+            //         if (description !== undefined) {
+            //             this.emitDescription(description);
+            //             emitLastProperty();
+            //         }
+            //     });
+            //     emitLastProperty();
+            // } else {
+            // this.forEachClassProperty(c, "none", (name, jsonName, p) => {
+            //     const description = this.descriptionForClassProperty(c, jsonName);
+            //     const propertyLines = this.propertyLinesDefinition(c, name, p);
+            //     this.emitDescription(description);
+            //     this.emitLine(propertyLines);
+            // });
+            // }
+            this.forEachClassProperty(c, "none", (name, jsonName, p) => {
+                const description = this.descriptionForClassProperty(c, jsonName);
+                const propertyLines = this.propertyLinesDefinition(c, name, p);
+                this.emitDescription(description);
+                this.emitLine(propertyLines);
+            });
 
             if (!this._options.justTypes) {
                 const groups = this.getEnumPropertyGroups(c);
@@ -909,13 +933,13 @@ encoder.dateEncodingStrategy = .formatted(formatter)`);
         const protocolString = protocols.length > 0 ? ": " + protocols.join(", ") : "";
 
         if (this._options.justTypes) {
-            this.emitBlockWithAccess(["enum ", enumName, protocolString], () => {
+            this.emitBlockWithAccess([this._options.accessLevel, " enum ", enumName, protocolString], () => {
                 this.forEachEnumCase(e, "none", name => {
                     this.emitLine("case ", name);
                 });
             });
         } else {
-            this.emitBlockWithAccess(["enum ", enumName, protocolString], () => {
+            this.emitBlockWithAccess([this._options.accessLevel, " enum ", enumName, protocolString], () => {
                 this.forEachEnumCase(e, "none", (name, jsonName) => {
                     this.emitLine("case ", name, ' = "', stringEscape(jsonName), '"');
                 });

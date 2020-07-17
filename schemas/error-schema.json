@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "$id": "error-schema.json",
+  "type": "object",
+  "description": "Schema of all properties of an Error event",
+  "allOf": [
+    {
+      "$ref": "_common-schema.json"
+    },
+    {
+      "required": [
+        "type",
+        "error"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "RUM event type",
+          "const": "error"
+        },
+        "error": {
+          "type": "object",
+          "description": "Error properties",
+          "required": [
+            "message",
+            "source"
+          ],
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "Error message"
+            },
+            "source": {
+              "type": "string",
+              "description": "Source of the error",
+              "enum": [
+                "network",
+                "source",
+                "console",
+                "logger",
+                "agent",
+                "webview"
+              ]
+            },
+            "stack": {
+              "type": "string",
+              "description": "Stacktrace of the error"
+            },
+            "is_crash": {
+              "type": "boolean",
+              "description": "Whether this error crashed the host application"
+            },
+            "resource": {
+              "type": "object",
+              "description": "Resource properties of the error",
+              "required": [
+                "method",
+                "status_code",
+                "url"
+              ],
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "description": "HTTP method of the resource",
+                  "enum": [
+                    "POST",
+                    "GET",
+                    "HEAD",
+                    "PUT",
+                    "DELETE",
+                    "PATCH"
+                  ]
+                },
+                "status_code": {
+                  "type": "integer",
+                  "description": "HTTP Status code of the resource",
+                  "minimum": 0
+                },
+                "url": {
+                  "type": "string",
+                  "description": "URL of the resource"
+                }
+              }
+            }
+          }
+        },
+        "action": {
+          "type": "object",
+          "description": "Action properties",
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "UUID of the action",
+              "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

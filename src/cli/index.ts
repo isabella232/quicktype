@@ -122,13 +122,13 @@ async function samplesFromDirectory(dataDir: string, httpHeaders?: string[]): Pr
                 fileOrUrl = fs.readFileSync(file, "utf8").trim();
             }
 
-            if (file.endsWith(".url") || file.endsWith(".json")) {
+            if (file.endsWith(".url")) {
                 sourcesInDir.push({
                     kind: "json",
                     name,
                     samples: [await readableFromFileOrURL(fileOrUrl, httpHeaders)]
                 });
-            } else if (file.endsWith(".schema")) {
+            } else if (file.endsWith(".schema") || file.endsWith(".json")) {
                 sourcesInDir.push({
                     kind: "schema",
                     name,
@@ -814,7 +814,15 @@ export async function makeQuicktypeOptions(
             break;
         case "json":
         case "schema":
-            sources = await getSources(options);
+            const rawSources = await getSources(options);
+            sources = rawSources.filter(x => !x.name.startsWith("_"));
+            const rest = rawSources.filter(x => x.name.startsWith("_"));
+            for (const src of rest) {
+                const uris = (src as SchemaTypeSource).uris;
+                if (uris) {
+                    options.additionalSchema.push(uris[0]);
+                }
+            }
             break;
         case "typescript":
             sources = [makeTypeScriptSource(options.src)];
