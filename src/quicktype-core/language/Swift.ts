@@ -662,10 +662,10 @@ export class SwiftRenderer extends ConvenienceRenderer {
     private renderClassDefinition(c: ClassType, className: Name): void {
         this.startFile(className);
 
+        this.emitMark(this.sourcelikeToString(className), true);
+
         this.renderHeader(c, className);
         this.emitDescription(this.descriptionForType(c));
-
-        this.emitMark(this.sourcelikeToString(className), true);
 
         const isClass = this._options.useClasses || this.isCycleBreakerType(c);
         const structOrClass = isClass ? "class" : "struct";
